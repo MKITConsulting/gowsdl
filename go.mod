@@ -1,4 +1,4 @@
-module github.com/hooklift/gowsdl
+module github.com/MKITConsulting/gowsdl
 
 go 1.15
 
