@@ -33,7 +33,7 @@ type xopPlaceholder struct {
 
 // NewBinary allocate a new Binary backed by the given byte slice
 func NewBinary(v []byte) *Binary {
-	return &Binary{&v, "application/octet-stream", "", false}
+	return &Binary{&v, "application/octet-stream", "", true}
 }
 
 // Bytes returns a slice backed by the content of the field
