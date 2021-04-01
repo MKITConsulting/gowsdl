@@ -21,20 +21,28 @@ type SOAPDecoder interface {
 	Decode(v interface{}) error
 }
 
-type SOAPEnvelope struct {
+type SOAPEnvelopeResponse struct {
 	XMLName xml.Name `xml:"http://schemas.xmlsoap.org/soap/envelope/ Envelope"`
 	Header  *SOAPHeader
 	Body    SOAPBody
 }
 
+type SOAPEnvelope struct {
+	XMLName xml.Name `xml:"soap:Envelope"`
+	XmlNS   string   `xml:"xmlns:soap,attr"`
+
+	Header *SOAPHeader
+	Body   SOAPBody
+}
+
 type SOAPHeader struct {
-	XMLName xml.Name `xml:"http://schemas.xmlsoap.org/soap/envelope/ Header"`
+	XMLName xml.Name `xml:"soap:Header"`
 
 	Headers []interface{}
 }
 
 type SOAPBody struct {
-	XMLName xml.Name `xml:"http://schemas.xmlsoap.org/soap/envelope/ Body"`
+	XMLName xml.Name `xml:"soap:Body"`
 
 	Content interface{} `xml:",omitempty"`
 
@@ -152,6 +160,7 @@ const (
 	WssNsWSU        string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
 	WssNsType       string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText"
 	mtomContentType string = `multipart/related; start-info="application/soap+xml"; type="application/xop+xml"; boundary="%s"`
+	XmlNsSoapEnv    string = "http://schemas.xmlsoap.org/soap/envelope/"
 )
 
 type WSSSecurityHeader struct {
@@ -348,7 +357,9 @@ func (s *Client) CallWithFaultDetail(soapAction string, request, response interf
 }
 
 func (s *Client) call(ctx context.Context, soapAction string, request, response interface{}, faultDetail FaultError) error {
-	envelope := SOAPEnvelope{}
+	envelope := SOAPEnvelope{
+		XmlNS: XmlNsSoapEnv,
+	}
 
 	if s.headers != nil && len(s.headers) > 0 {
 		envelope.Header = &SOAPHeader{
@@ -424,7 +435,7 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 		}
 	}
 
-	respEnvelope := new(SOAPEnvelope)
+	respEnvelope := new(SOAPEnvelopeResponse)
 	respEnvelope.Body = SOAPBody{
 		Content: response,
 		Fault: &SOAPFault{
