@@ -56,7 +56,7 @@ type SOAPBody struct {
 	Fault         *SOAPFault `xml:",omitempty"`
 }
 
-type Attachment struct {
+type MIMEMultipartAttachment struct {
 	Name string
 	Data []byte
 }
@@ -230,6 +230,7 @@ type options struct {
 	client           HTTPClient
 	httpHeaders      map[string]string
 	mtom             bool
+	mma              bool
 }
 
 var defaultOptions = options{
@@ -303,12 +304,20 @@ func WithMTOM() Option {
 	}
 }
 
+// WithMIMEMultipartAttachments is an Option to set SOAP MIME Multipart attachment support.
+// Use Client.AddMIMEMultipartAttachment to add attachments of type MIMEMultipartAttachment to your SOAP request.
+func WithMIMEMultipartAttachments() Option {
+	return func(o *options) {
+		o.mma = true
+	}
+}
+
 // Client is soap client
 type Client struct {
 	url         string
 	opts        *options
 	headers     []interface{}
-	attachments []Attachment
+	attachments []MIMEMultipartAttachment
 }
 
 // HTTPClient is a client which can make HTTP requests
@@ -333,6 +342,12 @@ func NewClient(url string, opt ...Option) *Client {
 // For correct behavior, every header must contain a `XMLName` field.  Refer to #121 for details
 func (s *Client) AddHeader(header interface{}) {
 	s.headers = append(s.headers, header)
+}
+
+// AddMIMEMultipartAttachment adds an attachment to the client that will be sent only if the
+// WithMIMEMultipartAttachments option is used
+func (s *Client) AddMIMEMultipartAttachment(attachment MIMEMultipartAttachment) {
+	s.attachments = append(s.attachments, attachment)
 }
 
 // SetHeaders sets envelope headers, overwriting any existing headers.
@@ -417,7 +432,7 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 			attHeader := make(textproto.MIMEHeader)
 			attHeader.Set("Content-Type", fmt.Sprintf("application/octet-stream; name=%s", attachment.Name))
 			attHeader.Set("Content-Transfer-Encoding", "binary")
-			attHeader.Set("Content-ID", fmt.Sprintf("<%s>",attachment.Name))
+			attHeader.Set("Content-ID", fmt.Sprintf("<%s>", attachment.Name))
 			attHeader.Set("Content-Disposition",
 				fmt.Sprintf("attachment; name=\"%s\"; filename=\"%s\"", attachment.Name, attachment.Name))
 			var fw io.Writer
@@ -514,8 +529,4 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 	}
 
 	return respEnvelope.Body.ErrorFromFault()
-}
-
-func (s *Client) AddAttachment(attachment Attachment) {
-	s.attachments = append(s.attachments, attachment)
 }

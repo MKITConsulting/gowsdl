@@ -24,7 +24,7 @@ type PingRequest struct {
 	// XMLName xml.Name `xml:"http://example.com/service.xsd PingRequest"`
 
 	Message    string  `xml:"Message,omitempty"`
-	Attachment *Binary `xml:"Attachment,omitempty"`
+	Attachment *Binary `xml:"MIMEMultipartAttachment,omitempty"`
 }
 
 type PingResponse struct {
@@ -37,7 +37,7 @@ type PingReply struct {
 	// XMLName xml.Name `xml:"http://example.com/service.xsd PingReply"`
 
 	Message    string `xml:"Message,omitempty"`
-	Attachment []byte `xml:"Attachment,omitempty"`
+	Attachment []byte `xml:"MIMEMultipartAttachment,omitempty"`
 }
 
 type AttachmentRequest struct {
@@ -144,7 +144,7 @@ func TestClient_Attachments(t *testing.T) {
 	defer ts.Close()
 
 	client := NewClient(ts.URL)
-	client.AddAttachment(Attachment{
+	client.AddMIMEMultipartAttachment(MIMEMultipartAttachment{
 		Name: "Test123",
 		Data: []byte(`adasd`),
 	})
@@ -157,12 +157,12 @@ func TestClient_Attachments(t *testing.T) {
 		t.Fatalf("couln't call service: %v", err)
 	}
 	/*
-		if !bytes.Equal(reply.ContentID.Bytes(), req.Attachment.Bytes()) {
-			t.Errorf("got %s wanted %s", reply.Attachment.Bytes(), req.Attachment.Bytes())
+		if !bytes.Equal(reply.ContentID.Bytes(), req.MIMEMultipartAttachment.Bytes()) {
+			t.Errorf("got %s wanted %s", reply.MIMEMultipartAttachment.Bytes(), req.MIMEMultipartAttachment.Bytes())
 		}
 
-		if reply.Attachment.ContentType() != req.Attachment.ContentType() {
-			t.Errorf("got %s wanted %s", reply.Attachment.Bytes(), req.Attachment.ContentType())
+		if reply.MIMEMultipartAttachment.ContentType() != req.MIMEMultipartAttachment.ContentType() {
+			t.Errorf("got %s wanted %s", reply.MIMEMultipartAttachment.Bytes(), req.MIMEMultipartAttachment.ContentType())
 		}*/
 }
 
