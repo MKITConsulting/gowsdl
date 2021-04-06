@@ -6,12 +6,9 @@ import (
 	"crypto/tls"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"io/ioutil"
-	"mime/multipart"
 	"net"
 	"net/http"
-	"net/textproto"
 	"time"
 )
 
@@ -164,12 +161,12 @@ func (e *HTTPError) Error() string {
 
 const (
 	// Predefined WSS namespaces to be used in
-	WssNsWSSE            string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
-	WssNsWSU             string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
-	WssNsType            string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText"
-	mtomContentType      string = `multipart/related; start-info="application/soap+xml"; type="application/xop+xml"; boundary="%s"`
-	multipartContentType string = `multipart/related; start="<soaprequest@gowsdl.lib>"; type="text/xml"; boundary="%s"`
-	XmlNsSoapEnv         string = "http://schemas.xmlsoap.org/soap/envelope/"
+	WssNsWSSE       string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+	WssNsWSU        string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+	WssNsType       string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText"
+	mtomContentType string = `multipart/related; start-info="application/soap+xml"; type="application/xop+xml"; boundary="%s"`
+	mmaContentType  string = `multipart/related; start="<soaprequest@gowsdl.lib>"; type="text/xml"; boundary="%s"`
+	XmlNsSoapEnv    string = "http://schemas.xmlsoap.org/soap/envelope/"
 )
 
 type WSSSecurityHeader struct {
@@ -395,8 +392,12 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 	envelope.Body.Content = request
 	buffer := new(bytes.Buffer)
 	var encoder SOAPEncoder
-	if s.opts.mtom {
+	if s.opts.mtom && s.opts.mma {
+		return fmt.Errorf("cannot use MTOM (XOP) and MMA (MIME Multipart Attachments) option at the same time")
+	} else if s.opts.mtom {
 		encoder = newMtomEncoder(buffer)
+	} else if s.opts.mma {
+		encoder = newMmaEncoder(buffer, s.attachments)
 	} else {
 		encoder = xml.NewEncoder(buffer)
 	}
@@ -409,47 +410,7 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 		return err
 	}
 
-	// TODO: move to new encoder so that we don't need to clash with MTOM here
-	var multipartBuffer bytes.Buffer
-	var multipartWriter *multipart.Writer
-	if len(s.attachments) > 0 && !s.opts.mtom {
-		var err error
-		var soapPartWriter io.Writer
-		multipartWriter = multipart.NewWriter(&multipartBuffer)
-
-		// 1. write SOAP Part
-		headers := make(textproto.MIMEHeader)
-		headers.Set("Content-Type", `text/xml;charset=UTF-8`)
-		headers.Set("Content-Transfer-Encoding", "8bit")
-		headers.Set("Content-ID", "<soaprequest@gowsdl.lib>")
-		if soapPartWriter, err = multipartWriter.CreatePart(headers); err != nil {
-			return err
-		}
-		soapPartWriter.Write(buffer.Bytes())
-
-		// 2. write attachments parts
-		for _, attachment := range s.attachments {
-			attHeader := make(textproto.MIMEHeader)
-			attHeader.Set("Content-Type", fmt.Sprintf("application/octet-stream; name=%s", attachment.Name))
-			attHeader.Set("Content-Transfer-Encoding", "binary")
-			attHeader.Set("Content-ID", fmt.Sprintf("<%s>", attachment.Name))
-			attHeader.Set("Content-Disposition",
-				fmt.Sprintf("attachment; name=\"%s\"; filename=\"%s\"", attachment.Name, attachment.Name))
-			var fw io.Writer
-			fw, err := multipartWriter.CreatePart(attHeader)
-			if err != nil {
-				return err
-			}
-			_, err = io.Copy(fw, bytes.NewReader(attachment.Data))
-			if err != nil {
-				return err
-			}
-		}
-		// close the writer
-		multipartWriter.Close()
-	}
-
-	req, err := http.NewRequest("POST", s.url, &multipartBuffer)
+	req, err := http.NewRequest("POST", s.url, buffer)
 	if err != nil {
 		return err
 	}
@@ -461,6 +422,8 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 
 	if s.opts.mtom {
 		req.Header.Add("Content-Type", fmt.Sprintf(mtomContentType, encoder.(*mtomEncoder).Boundary()))
+	} else if s.opts.mma {
+		req.Header.Add("Content-Type", fmt.Sprintf(mmaContentType, encoder.(*mmaEncoder).Boundary()))
 	} else {
 		req.Header.Add("Content-Type", "text/xml; charset=\"utf-8\"")
 	}
@@ -470,10 +433,6 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 		for k, v := range s.opts.httpHeaders {
 			req.Header.Set(k, v)
 		}
-	}
-	// TODO: move to new encoder
-	if len(s.attachments) > 0 && multipartWriter != nil {
-		req.Header.Set("Content-Type", fmt.Sprintf(multipartContentType, multipartWriter.Boundary()))
 	}
 	req.Close = true
 
