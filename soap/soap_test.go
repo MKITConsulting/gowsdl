@@ -40,6 +40,11 @@ type PingReply struct {
 	Attachment []byte `xml:"Attachment,omitempty"`
 }
 
+type AttachmentRequest struct {
+	Name      string `xml:"name,omitempty"`
+	ContentID string `xml:"contentID,omitempty"`
+}
+
 func TestClient_Call(t *testing.T) {
 	var pingRequest = new(Ping)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +128,42 @@ func TestClient_Send_Correct_Headers(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestClient_Attachments(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for k, v := range r.Header {
+			w.Header().Set(k, v[0])
+		}
+		bodyBuf, _ := ioutil.ReadAll(r.Body)
+		_, err := w.Write(bodyBuf)
+		if err != nil {
+			panic(err)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL)
+	client.AddAttachment(Attachment{
+		Name: "Test123",
+		Data: []byte(`adasd`),
+	})
+	req := &AttachmentRequest{
+		Name:      "Testfile",
+		ContentID: "my_content_id",
+	}
+	reply := &AttachmentRequest{}
+	if err := client.Call("GetData", req, reply); err != nil {
+		t.Fatalf("couln't call service: %v", err)
+	}
+	/*
+		if !bytes.Equal(reply.ContentID.Bytes(), req.Attachment.Bytes()) {
+			t.Errorf("got %s wanted %s", reply.Attachment.Bytes(), req.Attachment.Bytes())
+		}
+
+		if reply.Attachment.ContentType() != req.Attachment.ContentType() {
+			t.Errorf("got %s wanted %s", reply.Attachment.Bytes(), req.Attachment.ContentType())
+		}*/
 }
 
 func TestClient_MTOM(t *testing.T) {

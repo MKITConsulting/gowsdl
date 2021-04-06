@@ -6,9 +6,12 @@ import (
 	"crypto/tls"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"net/textproto"
 	"time"
 )
 
@@ -51,6 +54,11 @@ type SOAPBody struct {
 	// fault is initialized to non-nil with user-provided detail type.
 	faultOccurred bool
 	Fault         *SOAPFault `xml:",omitempty"`
+}
+
+type Attachment struct {
+	Name string
+	Data []byte
 }
 
 // UnmarshalXML unmarshals SOAPBody xml
@@ -156,11 +164,12 @@ func (e *HTTPError) Error() string {
 
 const (
 	// Predefined WSS namespaces to be used in
-	WssNsWSSE       string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
-	WssNsWSU        string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
-	WssNsType       string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText"
-	mtomContentType string = `multipart/related; start-info="application/soap+xml"; type="application/xop+xml"; boundary="%s"`
-	XmlNsSoapEnv    string = "http://schemas.xmlsoap.org/soap/envelope/"
+	WssNsWSSE            string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+	WssNsWSU             string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+	WssNsType            string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText"
+	mtomContentType      string = `multipart/related; start-info="application/soap+xml"; type="application/xop+xml"; boundary="%s"`
+	multipartContentType string = `multipart/related; start="<soaprequest@gowsdl.lib>"; type="text/xml"; boundary="%s"`
+	XmlNsSoapEnv         string = "http://schemas.xmlsoap.org/soap/envelope/"
 )
 
 type WSSSecurityHeader struct {
@@ -296,9 +305,10 @@ func WithMTOM() Option {
 
 // Client is soap client
 type Client struct {
-	url     string
-	opts    *options
-	headers []interface{}
+	url         string
+	opts        *options
+	headers     []interface{}
+	attachments []Attachment
 }
 
 // HTTPClient is a client which can make HTTP requests
@@ -384,7 +394,47 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 		return err
 	}
 
-	req, err := http.NewRequest("POST", s.url, buffer)
+	// TODO: move to new encoder so that we don't need to clash with MTOM here
+	var multipartBuffer bytes.Buffer
+	var multipartWriter *multipart.Writer
+	if len(s.attachments) > 0 && !s.opts.mtom {
+		var err error
+		var soapPartWriter io.Writer
+		multipartWriter = multipart.NewWriter(&multipartBuffer)
+
+		// 1. write SOAP Part
+		headers := make(textproto.MIMEHeader)
+		headers.Set("Content-Type", `text/xml;charset=UTF-8`)
+		headers.Set("Content-Transfer-Encoding", "8bit")
+		headers.Set("Content-ID", "<soaprequest@gowsdl.lib>")
+		if soapPartWriter, err = multipartWriter.CreatePart(headers); err != nil {
+			return err
+		}
+		soapPartWriter.Write(buffer.Bytes())
+
+		// 2. write attachments parts
+		for _, attachment := range s.attachments {
+			attHeader := make(textproto.MIMEHeader)
+			attHeader.Set("Content-Type", fmt.Sprintf("application/octet-stream; name=%s", attachment.Name))
+			attHeader.Set("Content-Transfer-Encoding", "binary")
+			attHeader.Set("Content-ID", fmt.Sprintf("<%s>",attachment.Name))
+			attHeader.Set("Content-Disposition",
+				fmt.Sprintf("attachment; name=\"%s\"; filename=\"%s\"", attachment.Name, attachment.Name))
+			var fw io.Writer
+			fw, err := multipartWriter.CreatePart(attHeader)
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(fw, bytes.NewReader(attachment.Data))
+			if err != nil {
+				return err
+			}
+		}
+		// close the writer
+		multipartWriter.Close()
+	}
+
+	req, err := http.NewRequest("POST", s.url, &multipartBuffer)
 	if err != nil {
 		return err
 	}
@@ -405,6 +455,10 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 		for k, v := range s.opts.httpHeaders {
 			req.Header.Set(k, v)
 		}
+	}
+	// TODO: move to new encoder
+	if len(s.attachments) > 0 && multipartWriter != nil {
+		req.Header.Set("Content-Type", fmt.Sprintf(multipartContentType, multipartWriter.Boundary()))
 	}
 	req.Close = true
 
@@ -460,4 +514,8 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 	}
 
 	return respEnvelope.Body.ErrorFromFault()
+}
+
+func (s *Client) AddAttachment(attachment Attachment) {
+	s.attachments = append(s.attachments, attachment)
 }
