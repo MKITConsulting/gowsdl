@@ -24,7 +24,7 @@ type PingRequest struct {
 	// XMLName xml.Name `xml:"http://example.com/service.xsd PingRequest"`
 
 	Message    string  `xml:"Message,omitempty"`
-	Attachment *Binary `xml:"MIMEMultipartAttachment,omitempty"`
+	Attachment *Binary `xml:"Attachment,omitempty"`
 }
 
 type PingResponse struct {
@@ -37,10 +37,12 @@ type PingReply struct {
 	// XMLName xml.Name `xml:"http://example.com/service.xsd PingReply"`
 
 	Message    string `xml:"Message,omitempty"`
-	Attachment []byte `xml:"MIMEMultipartAttachment,omitempty"`
+	Attachment []byte `xml:"Attachment,omitempty"`
 }
 
 type AttachmentRequest struct {
+	XMLName xml.Name `xml:"http://example.com/service.xsd attachmentRequest"`
+
 	Name      string `xml:"name,omitempty"`
 	ContentID string `xml:"contentID,omitempty"`
 }
@@ -143,7 +145,8 @@ func TestClient_Attachments(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewClient(ts.URL)
+	client := NewClient(ts.URL,
+		WithMIMEMultipartAttachments())
 	client.AddMIMEMultipartAttachment(MIMEMultipartAttachment{
 		Name: "Test123",
 		Data: []byte(`adasd`),
@@ -152,18 +155,11 @@ func TestClient_Attachments(t *testing.T) {
 		Name:      "Testfile",
 		ContentID: "my_content_id",
 	}
-	reply := &AttachmentRequest{}
-	if err := client.Call("GetData", req, reply); err != nil {
+	reply := new(AttachmentRequest)
+	if err := client.Call("''", req, reply); err != nil {
 		t.Fatalf("couln't call service: %v", err)
 	}
-	/*
-		if !bytes.Equal(reply.ContentID.Bytes(), req.MIMEMultipartAttachment.Bytes()) {
-			t.Errorf("got %s wanted %s", reply.MIMEMultipartAttachment.Bytes(), req.MIMEMultipartAttachment.Bytes())
-		}
-
-		if reply.MIMEMultipartAttachment.ContentType() != req.MIMEMultipartAttachment.ContentType() {
-			t.Errorf("got %s wanted %s", reply.MIMEMultipartAttachment.Bytes(), req.MIMEMultipartAttachment.ContentType())
-		}*/
+	assert.Equal(t, req.ContentID, reply.ContentID)
 }
 
 func TestClient_MTOM(t *testing.T) {

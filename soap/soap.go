@@ -23,8 +23,8 @@ type SOAPDecoder interface {
 
 type SOAPEnvelopeResponse struct {
 	XMLName xml.Name `xml:"http://schemas.xmlsoap.org/soap/envelope/ Envelope"`
-	Header  *SOAPHeader
-	Body    SOAPBody
+	Header  *SOAPHeaderResponse
+	Body    SOAPBodyResponse
 }
 
 type SOAPEnvelope struct {
@@ -37,6 +37,11 @@ type SOAPEnvelope struct {
 
 type SOAPHeader struct {
 	XMLName xml.Name `xml:"soap:Header"`
+
+	Headers []interface{}
+}
+type SOAPHeaderResponse struct {
+	XMLName xml.Name `xml:"Header"`
 
 	Headers []interface{}
 }
@@ -53,13 +58,25 @@ type SOAPBody struct {
 	Fault         *SOAPFault `xml:",omitempty"`
 }
 
+type SOAPBodyResponse struct {
+	XMLName xml.Name `xml:"Body"`
+
+	Content interface{} `xml:",omitempty"`
+
+	// faultOccurred indicates whether the XML body included a fault;
+	// we cannot simply store SOAPFault as a pointer to indicate this, since
+	// fault is initialized to non-nil with user-provided detail type.
+	faultOccurred bool
+	Fault         *SOAPFault `xml:",omitempty"`
+}
+
 type MIMEMultipartAttachment struct {
 	Name string
 	Data []byte
 }
 
 // UnmarshalXML unmarshals SOAPBody xml
-func (b *SOAPBody) UnmarshalXML(d *xml.Decoder, _ xml.StartElement) error {
+func (b *SOAPBodyResponse) UnmarshalXML(d *xml.Decoder, _ xml.StartElement) error {
 	if b.Content == nil {
 		return xml.UnmarshalError("Content must be a pointer to a struct")
 	}
@@ -110,6 +127,14 @@ Loop:
 }
 
 func (b *SOAPBody) ErrorFromFault() error {
+	if b.faultOccurred {
+		return b.Fault
+	}
+	b.Fault = nil
+	return nil
+}
+
+func (b *SOAPBodyResponse) ErrorFromFault() error {
 	if b.faultOccurred {
 		return b.Fault
 	}
@@ -379,6 +404,7 @@ func (s *Client) CallWithFaultDetail(soapAction string, request, response interf
 }
 
 func (s *Client) call(ctx context.Context, soapAction string, request, response interface{}, faultDetail FaultError) error {
+	// SOAP envelope capable of namespace prefixes
 	envelope := SOAPEnvelope{
 		XmlNS: XmlNsSoapEnv,
 	}
@@ -463,8 +489,10 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 		}
 	}
 
+	// xml Decoder (used with and without MTOM) cannot handle namespace prefixes (yet),
+	// so we have to use a namespace-less response envelope
 	respEnvelope := new(SOAPEnvelopeResponse)
-	respEnvelope.Body = SOAPBody{
+	respEnvelope.Body = SOAPBodyResponse{
 		Content: response,
 		Fault: &SOAPFault{
 			Detail: faultDetail,

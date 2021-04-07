@@ -46,18 +46,16 @@ func (e *mmaEncoder) Encode(v interface{}) error {
 		attHeader.Set("Content-ID", fmt.Sprintf("<%s>", attachment.Name))
 		attHeader.Set("Content-Disposition",
 			fmt.Sprintf("attachment; name=\"%s\"; filename=\"%s\"", attachment.Name, attachment.Name))
-		var fw io.Writer
-		fw, err := e.writer.CreatePart(attHeader)
+		var attachmentPartWriter io.Writer
+		attachmentPartWriter, err := e.writer.CreatePart(attHeader)
 		if err != nil {
 			return err
 		}
-		_, err = io.Copy(fw, bytes.NewReader(attachment.Data))
+		_, err = io.Copy(attachmentPartWriter, bytes.NewReader(attachment.Data))
 		if err != nil {
 			return err
 		}
 	}
-	// close the writer
-	e.writer.Close()
 
 	return nil
 }
