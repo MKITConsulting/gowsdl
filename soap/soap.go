@@ -512,9 +512,13 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 	if err != nil {
 		return err
 	}
-	mmaBoundary, err := getMmaHeader(res.Header.Get("Content-Type"))
-	if err != nil {
-		return err
+
+	var mmaBoundary string
+	if s.opts.mma{
+		mmaBoundary, err = getMmaHeader(res.Header.Get("Content-Type"))
+		if err != nil {
+			return err
+		}
 	}
 
 	var dec SOAPDecoder
