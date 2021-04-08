@@ -22,9 +22,10 @@ type SOAPDecoder interface {
 }
 
 type SOAPEnvelopeResponse struct {
-	XMLName xml.Name `xml:"http://schemas.xmlsoap.org/soap/envelope/ Envelope"`
-	Header  *SOAPHeaderResponse
-	Body    SOAPBodyResponse
+	XMLName     xml.Name `xml:"http://schemas.xmlsoap.org/soap/envelope/ Envelope"`
+	Header      *SOAPHeaderResponse
+	Body        SOAPBodyResponse
+	Attachments []MIMEMultipartAttachment `xml:"attachments,omitempty"`
 }
 
 type SOAPEnvelope struct {
@@ -190,7 +191,6 @@ const (
 	WssNsWSU        string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
 	WssNsType       string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText"
 	mtomContentType string = `multipart/related; start-info="application/soap+xml"; type="application/xop+xml"; boundary="%s"`
-	mmaContentType  string = `multipart/related; start="<soaprequest@gowsdl.lib>"; type="text/xml"; boundary="%s"`
 	XmlNsSoapEnv    string = "http://schemas.xmlsoap.org/soap/envelope/"
 )
 
@@ -380,19 +380,27 @@ func (s *Client) SetHeaders(headers ...interface{}) {
 
 // CallContext performs HTTP POST request with a context
 func (s *Client) CallContext(ctx context.Context, soapAction string, request, response interface{}) error {
-	return s.call(ctx, soapAction, request, response, nil)
+	return s.call(ctx, soapAction, request, response, nil, nil)
 }
 
 // Call performs HTTP POST request.
 // Note that if the server returns a status code >= 400, a HTTPError will be returned
 func (s *Client) Call(soapAction string, request, response interface{}) error {
-	return s.call(context.Background(), soapAction, request, response, nil)
+	return s.call(context.Background(), soapAction, request, response, nil, nil)
+}
+
+// CallContextWithAttachmentsAndFaultDetail performs HTTP POST request.
+// Note that if SOAP fault is returned, it will be stored in the error.
+// On top the attachments array will be filled with attachments returned from the SOAP request.
+func (s *Client) CallContextWithAttachmentsAndFaultDetail(ctx context.Context, soapAction string, request,
+	response interface{}, faultDetail FaultError, attachments *[]MIMEMultipartAttachment) error {
+	return s.call(ctx, soapAction, request, response, faultDetail, attachments)
 }
 
 // CallContextWithFault performs HTTP POST request.
 // Note that if SOAP fault is returned, it will be stored in the error.
 func (s *Client) CallContextWithFaultDetail(ctx context.Context, soapAction string, request, response interface{}, faultDetail FaultError) error {
-	return s.call(ctx, soapAction, request, response, faultDetail)
+	return s.call(ctx, soapAction, request, response, faultDetail, nil)
 }
 
 // CallWithFaultDetail performs HTTP POST request.
@@ -400,10 +408,11 @@ func (s *Client) CallContextWithFaultDetail(ctx context.Context, soapAction stri
 // the passed in fault detail is expected to implement FaultError interface,
 // which allows to condense the detail into a short error message.
 func (s *Client) CallWithFaultDetail(soapAction string, request, response interface{}, faultDetail FaultError) error {
-	return s.call(context.Background(), soapAction, request, response, faultDetail)
+	return s.call(context.Background(), soapAction, request, response, faultDetail, nil)
 }
 
-func (s *Client) call(ctx context.Context, soapAction string, request, response interface{}, faultDetail FaultError) error {
+func (s *Client) call(ctx context.Context, soapAction string, request, response interface{}, faultDetail FaultError,
+	retAttachments *[]MIMEMultipartAttachment) error {
 	// SOAP envelope capable of namespace prefixes
 	envelope := SOAPEnvelope{
 		XmlNS: XmlNsSoapEnv,
@@ -503,10 +512,16 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 	if err != nil {
 		return err
 	}
+	mmaBoundary, err := getMmaHeader(res.Header.Get("Content-Type"))
+	if err != nil {
+		return err
+	}
 
 	var dec SOAPDecoder
 	if mtomBoundary != "" {
 		dec = newMtomDecoder(res.Body, mtomBoundary)
+	} else if mmaBoundary != "" {
+		dec = newMmaDecoder(res.Body, mmaBoundary)
 	} else {
 		dec = xml.NewDecoder(res.Body)
 	}
@@ -515,5 +530,8 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 		return err
 	}
 
+	if respEnvelope.Attachments != nil {
+		*retAttachments = respEnvelope.Attachments
+	}
 	return respEnvelope.Body.ErrorFromFault()
 }

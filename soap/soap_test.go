@@ -2,6 +2,7 @@ package soap
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
@@ -132,7 +133,7 @@ func TestClient_Send_Correct_Headers(t *testing.T) {
 	}
 }
 
-func TestClient_Attachments(t *testing.T) {
+func TestClient_Attachments_WithAttachmentResponse(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for k, v := range r.Header {
 			w.Header().Set(k, v[0])
@@ -145,21 +146,36 @@ func TestClient_Attachments(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewClient(ts.URL,
-		WithMIMEMultipartAttachments())
-	client.AddMIMEMultipartAttachment(MIMEMultipartAttachment{
-		Name: "Test123",
-		Data: []byte(`adasd`),
-	})
+	// GIVEN
+	firstAtt := MIMEMultipartAttachment{
+		Name: "First_Attachment",
+		Data: []byte(`foobar`),
+	}
+	secondAtt := MIMEMultipartAttachment{
+		Name: "Second_Attachment",
+		Data: []byte(`tl;tr`),
+	}
+	client := NewClient(ts.URL, WithMIMEMultipartAttachments())
+	client.AddMIMEMultipartAttachment(firstAtt)
+	client.AddMIMEMultipartAttachment(secondAtt)
 	req := &AttachmentRequest{
-		Name:      "Testfile",
-		ContentID: "my_content_id",
+		Name:      "UploadMyFilePlease",
+		ContentID: "First_Attachment",
 	}
 	reply := new(AttachmentRequest)
-	if err := client.Call("''", req, reply); err != nil {
+	retAttachments := make([]MIMEMultipartAttachment, 0)
+
+	// WHEN
+	if err := client.CallContextWithAttachmentsAndFaultDetail(context.TODO(), "''", req,
+		reply, nil, &retAttachments); err != nil {
 		t.Fatalf("couln't call service: %v", err)
 	}
+
+	// THEN
 	assert.Equal(t, req.ContentID, reply.ContentID)
+	assert.Len(t, retAttachments, 2)
+	assert.Equal(t, retAttachments[0], firstAtt)
+	assert.Equal(t, retAttachments[1], secondAtt)
 }
 
 func TestClient_MTOM(t *testing.T) {

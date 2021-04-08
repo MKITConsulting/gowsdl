@@ -3,21 +3,37 @@ package soap
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"mime"
 	"mime/multipart"
 	"net/textproto"
+	"strings"
 )
+
+const mmaContentType string = `multipart/related; start="<soaprequest@gowsdl.lib>"; type="text/xml"; boundary="%s"`
 
 type mmaEncoder struct {
 	writer      *multipart.Writer
 	attachments []MIMEMultipartAttachment
 }
 
+type mmaDecoder struct {
+	reader *multipart.Reader
+}
+
 func newMmaEncoder(w io.Writer, attachments []MIMEMultipartAttachment) *mmaEncoder {
 	return &mmaEncoder{
 		writer:      multipart.NewWriter(w),
 		attachments: attachments,
+	}
+}
+
+func newMmaDecoder(r io.Reader, boundary string) *mmaDecoder {
+	return &mmaDecoder{
+		reader: multipart.NewReader(r, boundary),
 	}
 }
 
@@ -66,4 +82,69 @@ func (e *mmaEncoder) Flush() error {
 
 func (e *mmaEncoder) Boundary() string {
 	return e.writer.Boundary()
+}
+
+func getMmaHeader(contentType string) (string, error) {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return "", err
+	}
+
+	if strings.HasPrefix(mediaType, "multipart/") {
+		boundary, ok := params["boundary"]
+		if !ok || boundary == "" {
+			return "", fmt.Errorf("invalid multipart boundary: %s", boundary)
+		}
+
+		startInfo, ok := params["start"]
+		if !ok || startInfo != "<soaprequest@gowsdl.lib>" {
+			return "", fmt.Errorf(`expected param start="<soaprequest@gowsdl.lib>", got %s`, startInfo)
+		}
+		return boundary, nil
+	}
+
+	return "", nil
+}
+
+func (d *mmaDecoder) Decode(v interface{}) error {
+	soapEnvResp := v.(*SOAPEnvelopeResponse)
+	attachments := make([]MIMEMultipartAttachment, 0)
+	for {
+		p, err := d.reader.NextPart()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+		contentType := p.Header.Get("Content-Type")
+		if contentType == "text/xml;charset=UTF-8" {
+			// decode SOAP part
+			err := xml.NewDecoder(p).Decode(v)
+			if err != nil {
+				return err
+			}
+		} else {
+			// decode attachment parts
+			contentID := p.Header.Get("Content-Id")
+			if contentID == "" {
+				return errors.New("Invalid multipart content ID")
+			}
+			content, err := ioutil.ReadAll(p)
+			if err != nil {
+				return err
+			}
+
+			contentID = strings.Trim(contentID, "<>")
+			attachments = append(attachments, MIMEMultipartAttachment{
+				Name: contentID,
+				Data: content,
+			})
+		}
+	}
+	if len(attachments) > 0 {
+		soapEnvResp.Attachments = attachments
+	}
+
+	return nil
 }
