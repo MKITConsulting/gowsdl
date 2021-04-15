@@ -490,7 +490,8 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 	}
 	defer res.Body.Close()
 
-	if res.StatusCode >= 400 {
+	// only return error if there's no custom error handling (see CallContextWithFaultDetail)
+	if res.StatusCode >= 400 && faultDetail == nil {
 		body, _ := ioutil.ReadAll(res.Body)
 		return &HTTPError{
 			StatusCode:   res.StatusCode,
